@@ -1,0 +1,4 @@
+- insert:
+    - id: taste-loop
+      name: '@nelsonlongxiang/dsh-taste-loop'
+      config: {}

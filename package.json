@@ -1,0 +1,45 @@
+{
+  "name": "@nelsonlongxiang/dsh-taste-loop",
+  "version": "0.1.0",
+  "description": "品味闭环 DSH 插件（taste-loop）：taste_rules/case/record/queue 四工具 + taste-mcp 服务托管（供市场网关聚合）+ 协议自呈现。host-only。",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "verify": "tsc -p tsconfig.json --noEmit && node --test test/",
+    "drift": "node scripts/check-drift.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "ygl-trees": "0.114.9"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.5",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.3",
+    "@deepseek-ai/dsh-agent": ">=0.2.1-rc.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "license": "MIT"
+}

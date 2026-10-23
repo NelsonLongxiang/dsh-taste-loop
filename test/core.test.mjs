@@ -1,0 +1,13 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { callTool, clean, slug, INSTRUCTIONS } from "../lib/mcp-core.js";
+const deps = { rulesPath: new URL("./fixtures/rules.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), queuePath: "/nonexistent/queue.json", inboxHome: "/nonexistent/inbox" };
+test("clean 拒绝语法分隔符", () => { assert.throws(() => clean("anchor", "a; judge=x")); assert.throws(() => clean("anchor", "a]b")); assert.equal(clean("x", " ok "), "ok"); });
+test("slug 确定性", () => { assert.equal(slug("MPBS 2026 汇总表"), slug("mpbs-2026_汇总表")); assert.equal(slug("A/B\\C"), "a-b-c"); });
+test("case 生成确定性 id", () => { const r = callTool("case", { object: "P2 网关", position: "r1" }, "mcp/t", deps); assert.equal(r.case_id, "p2-网关-r1"); });
+test("record 校验：未登记规则拒绝", () => { assert.throws(() => callTool("record", { domain: "d", case: "c", rule: "NOPE", verdict: "A", anchor: "a", reason: "r", model: "m" }, "mcp/t", deps), /未登记/); });
+test("record 校验：域不一致拒绝", () => { assert.throws(() => callTool("record", { domain: "错误域", case: "c", rule: "R1", verdict: "A", anchor: "a", reason: "r", model: "m" }, "mcp/t", deps), /不一致/); });
+test("record 校验：非法 model 拒绝", () => { assert.throws(() => callTool("record", { domain: "测试域", case: "c", rule: "R1", verdict: "A", anchor: "a", reason: "r", model: "bad model!" }, "mcp/t", deps), /model/); });
+test("rules 读取与 ratified 状态", () => { const r = callTool("rules", {}, "mcp/t", deps); assert.equal(r.rules.length, 1); assert.equal(r.ratified, 0); });
+test("queue 未跑轮如实返回", () => { const r = callTool("queue", {}, "mcp/t", deps); assert.equal(r.round, null); });
+test("INSTRUCTIONS 六条协议在位", () => { assert.equal(INSTRUCTIONS.split("\n").length, 7); assert.ok(INSTRUCTIONS.includes("decision:")); });
