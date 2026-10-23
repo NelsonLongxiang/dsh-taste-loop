@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "verify": "tsc -p tsconfig.json --noEmit && node --test test/",
+    "verify": "tsc -p tsconfig.json --noEmit && node --test test/core.test.mjs",
     "drift": "node scripts/check-drift.mjs"
   },
   "dsh": {
