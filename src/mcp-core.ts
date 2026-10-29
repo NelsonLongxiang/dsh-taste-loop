@@ -5,7 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
@@ -122,6 +122,11 @@ interface Resolution { proposal_id:string; revision:number; verdict:string; disp
 function readEndorsements(path?:string):Endorsement[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Endorsement)}
 function readResolutions(path?:string):Resolution[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Resolution)}
 const sha = (s:string):string => createHash("sha256").update(s).digest("hex");
+function withLedgerLock<T>(ledgerPath:string,fn:()=>T):T {
+ const lock=ledgerPath+".lock";mkdirSync(dirname(ledgerPath),{recursive:true});const deadline=Date.now()+5000;let fd:number|undefined;
+ while(fd===undefined){try{fd=openSync(lock,"wx");}catch(e){if((e as NodeJS.ErrnoException).code!=="EEXIST")throw e;if(Date.now()>=deadline)throw new ToolError("品味提案正在被其他会话修改；稍后重试，未写入数据");Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25);}}
+ try{return fn();}finally{try{closeSync(fd);unlinkSync(lock);}catch{/* best effort release */}}
+}
 const verifiedSession = (client:string):string|undefined => client.startsWith("dsh-session:") ? client.slice("dsh-session:".length) : undefined;
 export function proposalStatus(p:RuleProposal,votes:Endorsement[]):{status:RuleProposal["status"];effective:boolean;independent:Record<string,string[]>} {
  const relevant=votes.filter(v=>v.proposal_id===p.proposal_id&&v.revision===p.revision&&!v.ctx?.startsWith("decision:")&&(!p.author_session||v.session!==p.author_session));
@@ -147,7 +152,8 @@ export function proposeRule(args:Record<string,unknown>,client:string,deps:CoreD
   const raw=args.candidates; if(!Array.isArray(raw)||raw.length<2||raw.some(x=>typeof x!=="string"||!x.trim())) throw new ToolError("candidates 至少包含两个非空候选");
   const candidates=raw.map((x,i)=>clean("candidates["+i+"]",x)); if(!candidates.includes(selected)) throw new ToolError("selected 必须是 candidates 之一");
   const existing=loadRules(deps.rulesPath).find(r=>r.rule_id===ruleId); if(existing&&existing.domain!==domain) throw new ToolError("该 rule_id 已属于其他域，不能跨域接管");
-  const path=deps.proposalsPath ?? join(dirname(deps.rulesPath),"..","work","taste-rule-proposals.jsonl"); mkdirSync(dirname(path),{recursive:true});
+  const path=deps.proposalsPath ?? join(dirname(deps.rulesPath),"..","work","taste-rule-proposals.jsonl");
+  return withLedgerLock(path,()=>{
   if(readProposals(path).some(p=>p.rule_id===ruleId&&p.domain!==domain)) throw new ToolError("该 rule_id 已有其他域提案，不能跨域接管");
   const proposalId=clean("proposal_id",String(args.proposal_id||slug(domain)+"--"+ruleId));
   const allHistory=readProposals(path);
@@ -175,6 +181,7 @@ export function proposeRule(args:Record<string,unknown>,client:string,deps:CoreD
   if(prior&&prior.author==="agent:"+client+"@"+model&&JSON.stringify({case:prior.case,clause:prior.clause,candidates:prior.candidates,selected:prior.selected,reason:prior.reason,anchor:prior.anchor,ctx:prior.ctx})===fingerprint) return {...prior,duplicate:true};
   const event:RuleProposal={proposal_id:proposalId,revision:(prior?.revision??0)+1,rule_id:ruleId,domain,clause,candidates,selected,reason,case:caseId,anchor,author:"agent:"+client+"@"+model,...(sessionId?{author_session:sessionId}:{}),author_model:model,model,...(ctx?{ctx}:{}),proposed_at:new Date().toISOString(),status:"pending_review",effective:false,independent:{},version:"sha256:"+sha(JSON.stringify({ruleId,domain,case:caseId,clause,candidates,selected,reason,anchor,ctx}))};
   appendFileSync(path,JSON.stringify(event)+"\n",{encoding:"utf8",flag:"a"}); return event;
+  });
 }
 function proposalView(path?:string,votes:Endorsement[]=[],includeAuthorDetails=true,resolutions:Resolution[]=[]):{latest:RuleProposal[];active:RuleProposal[];history_count:number}{
  if(!path||!existsSync(path))return {latest:[],active:[],history_count:0};
@@ -216,7 +223,9 @@ function resolveProposal(args:Record<string,unknown>,client:string,deps:CoreDeps
 function endorseProposal(args:Record<string,unknown>,client:string,deps:CoreDeps):unknown {
   need(args,["proposal_id","case","verdict","anchor","reason","model"]);
   const pp=deps.proposalsPath??join(dirname(deps.rulesPath),"..","work","taste-rule-proposals.jsonl");
-  const proposalId=clean("proposal_id",args.proposal_id);const revisions=readProposals(pp).filter(x=>x.proposal_id===proposalId).sort((a,b)=>b.revision-a.revision);const p=revisions[0];if(!p)throw new ToolError("proposal 不存在");if(Number(args.revision)!==p.revision)throw new ToolError("提案版本已变化；请重新读取最新版本再背书");
+  const proposalId=clean("proposal_id",args.proposal_id);const epPath=deps.endorsementsPath??join(dirname(pp),"taste-rule-endorsements.jsonl");
+  return withLedgerLock(epPath,()=>{
+  const revisions=readProposals(pp).filter(x=>x.proposal_id===proposalId).sort((a,b)=>b.revision-a.revision);const p=revisions[0];if(!p)throw new ToolError("proposal 不存在");if(Number(args.revision)!==p.revision)throw new ToolError("提案版本已变化；请重新读取最新版本再背书");
   const model=clean("model",args.model),ctx=typeof args.ctx==="string"&&args.ctx.trim()?clean("ctx",args.ctx):undefined,verdict=clean("verdict",args.verdict);
   if(!MODEL_RE.test(model)||!CLIENT_RE.test(client))throw new ToolError("model 或调用方身份非法");if(!p.candidates.includes(verdict))throw new ToolError("verdict 必须属于提案候选");
   const sessionId=verifiedSession(client);
@@ -226,13 +235,14 @@ function endorseProposal(args:Record<string,unknown>,client:string,deps:CoreDeps
   const judge="agent:"+client+"@"+model,anchor=clean("anchor",args.anchor),reason=clean("reason",args.reason);
   const parts=["case="+caseId,"rule="+p.rule_id,"verdict="+verdict,"judge="+judge,"anchor="+anchor,"proposal="+proposalId+"@"+p.revision];if(ctx)parts.push("ctx="+ctx);
   const text="[品味·"+p.domain+"] "+parts.join("; ")+" :: "+reason;
-  const ep=deps.endorsementsPath??join(dirname(pp),"taste-rule-endorsements.jsonl");mkdirSync(dirname(ep),{recursive:true});
+  const ep=epPath;mkdirSync(dirname(ep),{recursive:true});
   const existing=readEndorsements(ep).find(x=>x.proposal_id===proposalId&&x.revision===p.revision&&x.session===sessionId&&x.verdict===verdict&&x.case===caseId);
   if(existing){const state=proposalView(pp,readEndorsements(ep)).latest.find(x=>x.proposal_id===proposalId);return {claim_id:existing.claim_id,duplicate:true,proposal_id:proposalId,revision:p.revision,status:state?.status,effective:state?.effective,independent:state?.independent};}
   const home=ensureInbox(deps),engine=deps.enginePath??defaultEnginePath();
   const wr=engineRun(engine,["research","claim","add",text,"--confidence","B"],home),claim=wr.parsed as {id?:string}|null;if(wr.rc!==0||!claim?.id)throw new Error("写入失败："+wr.out.slice(0,200));
   const endorsement:Endorsement={proposal_id:proposalId,revision:p.revision,case:caseId,verdict,judge,session:sessionId,...(ctx?{ctx}:{}),claim_id:claim.id,at:new Date().toISOString()};appendFileSync(ep,JSON.stringify(endorsement)+"\n",{encoding:"utf8",flag:"a"});
   const votes=readEndorsements(ep);const state=proposalView(pp,votes).latest.find(x=>x.proposal_id===proposalId);return {claim_id:claim.id,proposal_id:proposalId,revision:p.revision,status:state?.status,effective:state?.effective,independent:state?.independent};
+  });
 }
 export function callTool(name: ToolName, args: Record<string, unknown>, client: string, deps: CoreDeps): unknown {
   switch (name) {
