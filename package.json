@@ -1,6 +1,6 @@
 {
   "name": "@nelsonlongxiang/dsh-taste-loop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "品味闭环 DSH 插件（taste-loop）：taste_rules/case/record/queue 四工具 + taste-mcp 服务托管（供市场网关聚合）+ 协议自呈现。host-only。",
   "type": "module",
   "main": "lib/index.js",
