@@ -2,6 +2,7 @@ import { test } from "node:test";
 import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import { callTool, clean, slug, INSTRUCTIONS, proposalStatus, defaultEnginePath } from "../lib/mcp-core.js";
+import { registerTasteTools } from "../lib/tools.js";
 const deps = { rulesPath: new URL("./fixtures/rules.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), queuePath: "/nonexistent/queue.json", inboxHome: "/nonexistent/inbox" };
 test("clean 拒绝语法分隔符", () => { assert.throws(() => clean("anchor", "a; judge=x")); assert.throws(() => clean("anchor", "a]b")); assert.equal(clean("x", " ok "), "ok"); });
 test("slug 确定性", () => { assert.equal(slug("MPBS 2026 汇总表"), slug("mpbs-2026_汇总表")); assert.equal(slug("A/B\\C"), "a-b-c"); });
@@ -143,6 +144,16 @@ test("resolver must be allowlisted and append an arbitration claim", async () =>
  const out=callTool("update",{action:"resolve",proposal_id:"resolve-me",revision:1,verdict:"B",disposition:"accept",reason:"independent human review"},"dsh-session:arbiter-session",d);assert.equal(out.active,true);assert.ok(out.claim_id);
  const view=callTool("rules",{domain:"d"},"reader",d);assert.equal(view.rules[0].selected,"B");
  const rows=readFileSync(rp,"utf8").trim().split(/\r?\n/);assert.equal(rows.length,1);assert.equal(JSON.parse(rows[0]).disposition,"accept");rmSync(home,{recursive:true,force:true});
+});
+
+test("native taste_update uses DSH agent session identity", async () => {
+ const {mkdtempSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+ const home=mkdtempSync(join(tmpdir(),"taste-native-")),registrations=new Map();
+ const ctx={tools:{register(tool){registrations.set(tool.name,tool)}}};
+ registerTasteTools(ctx,{...deps,proposalsPath:join(home,"p.jsonl")});
+ const update=registrations.get("taste_update");const out=JSON.parse(await update.execute({action:"propose",domain:"native",rule_id:"NATIVE-SESSION-1",case:"c",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"test-model"},{agent:{id:"session-verified-native"}}));
+ assert.equal(out.author_session,"session-verified-native");
+ rmSync(home,{recursive:true,force:true});
 });
 test("taste_update 拒绝跨域接管已有 rule_id", async () => {
   const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
