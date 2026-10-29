@@ -3,9 +3,9 @@
  * 纯逻辑 + 可注入依赖（规则/队列读取、引擎调用），双实现同源由 scripts/check-drift.mjs 防漂移。
  * 引擎调用带孤儿空锁重试（1919cfb 同款缓解：Windows 快速连发下空 .ygllock 残尸误判活锁）。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
@@ -122,10 +122,38 @@ interface Resolution { proposal_id:string; revision:number; verdict:string; disp
 function readEndorsements(path?:string):Endorsement[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Endorsement)}
 function readResolutions(path?:string):Resolution[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Resolution)}
 const sha = (s:string):string => createHash("sha256").update(s).digest("hex");
+function pidIsAlive(pid:number):boolean {
+ if(!Number.isInteger(pid)||pid<1)return false;
+ try{process.kill(pid,0);return true;}catch(e){return (e as NodeJS.ErrnoException).code!=="ESRCH";}
+}
+function readLockOwner(lock:string):{pid?:number;nonce?:string}|null {try{return JSON.parse(readFileSync(lock,"utf8")) as {pid?:number;nonce?:string};}catch{return null;}}
+function reclaimDeadPidLock(lock:string):boolean {
+ try{
+  const before=statSync(lock);if(Date.now()-before.mtimeMs<3000)return false;
+  const beforeText=readFileSync(lock,"utf8"),owner=readLockOwner(lock);
+  if(owner&&(typeof owner.pid!=="number"||typeof owner.nonce!=="string"||pidIsAlive(owner.pid)))return false;
+  const checked=statSync(lock);if(before.dev!==checked.dev||before.ino!==checked.ino||readFileSync(lock,"utf8")!==beforeText)return false;
+  const stale=lock+".stale-"+process.pid+"-"+randomUUID();renameSync(lock,stale);
+  const movedStat=statSync(stale),movedText=readFileSync(stale,"utf8"),moved=readLockOwner(stale);
+  if(before.dev!==movedStat.dev||before.ino!==movedStat.ino||movedText!==beforeText||(owner&&(!moved||moved.pid!==owner.pid||moved.nonce!==owner.nonce))){
+   try{linkSync(stale,lock);unlinkSync(stale);}catch{/* keep quarantined copy; never delete a lock we cannot identify */}return false;
+  }
+  unlinkSync(stale);return true;
+ }catch{return false;}
+}
 function withLedgerLock<T>(ledgerPath:string,fn:()=>T):T {
- const lock=ledgerPath+".lock";mkdirSync(dirname(ledgerPath),{recursive:true});const deadline=Date.now()+5000;let fd:number|undefined;
- while(fd===undefined){try{fd=openSync(lock,"wx");}catch(e){if((e as NodeJS.ErrnoException).code!=="EEXIST")throw e;if(Date.now()>=deadline)throw new ToolError("品味提案正在被其他会话修改；稍后重试，未写入数据");Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25);}}
- try{return fn();}finally{try{closeSync(fd);unlinkSync(lock);}catch{/* best effort release */}}
+ const lock=ledgerPath+".lock",tmp=lock+".new-"+process.pid+"-"+randomUUID();mkdirSync(dirname(ledgerPath),{recursive:true});const deadline=Date.now()+5000;let fd:number|undefined;const nonce=randomUUID();
+ const meta=JSON.stringify({pid:process.pid,nonce,startedAt:new Date().toISOString()});
+ while(fd===undefined){
+  let candidate:number|undefined;
+  try{candidate=openSync(tmp,"wx");writeSync(candidate,meta);fsyncSync(candidate);linkSync(tmp,lock);fd=candidate;candidate=undefined;}
+  catch(e){if(candidate!==undefined)try{closeSync(candidate);}catch{}if((e as NodeJS.ErrnoException).code!=="EEXIST")throw e;
+   if(reclaimDeadPidLock(lock))continue;
+   if(Date.now()>=deadline)throw new ToolError("品味提案正在被其他会话修改或锁所有者仍存活；稍后重试，未写入数据");
+   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25);
+  }finally{try{unlinkSync(tmp);}catch{}}
+ }
+ try{return fn();}finally{try{closeSync(fd);const owner=readLockOwner(lock);if(owner?.pid===process.pid&&owner.nonce===nonce)unlinkSync(lock);}catch{/* retain unverifiable lock rather than deleting another owner's */}}
 }
 const verifiedSession = (client:string):string|undefined => client.startsWith("dsh-session:") ? client.slice("dsh-session:".length) : undefined;
 export function proposalStatus(p:RuleProposal,votes:Endorsement[]):{status:RuleProposal["status"];effective:boolean;independent:Record<string,string[]>} {
@@ -206,11 +234,12 @@ function resolveProposal(args:Record<string,unknown>,client:string,deps:CoreDeps
  if(!session||client.startsWith("mcp/")||!deps.arbiterSessionIds?.includes(session))throw new ToolError("当前会话不在配置的 arbiter session allowlist 中；resolution denied");
  need(args,["proposal_id","verdict","disposition","reason"]);
  const pp=deps.proposalsPath??join(dirname(deps.rulesPath),"..","work","taste-rule-proposals.jsonl");
+ const path=deps.resolutionsPath??join(dirname(pp),"taste-rule-resolutions.jsonl");
+ return withLedgerLock(path,()=>{
  const id=clean("proposal_id",args.proposal_id),revision=Number(args.revision);if(!Number.isInteger(revision)||revision<1)throw new ToolError("revision 必须是正整数");const p=readProposals(pp).find(x=>x.proposal_id===id&&x.revision===revision);
  if(!p)throw new ToolError("提案版本不存在");
  const verdict=clean("verdict",args.verdict),disposition=clean("disposition",args.disposition);if(disposition!=="accept"&&disposition!=="reject")throw new ToolError("disposition must be accept or reject");if(disposition==="accept"&&!p.candidates.includes(verdict))throw new ToolError("accepted verdict must be one of proposal candidates");if(disposition==="reject"&&verdict!=="__rejected__")throw new ToolError("rejected proposal must use verdict __rejected__");
- const reason=clean("reason",args.reason);const path=deps.resolutionsPath??join(dirname(pp),"taste-rule-resolutions.jsonl");mkdirSync(dirname(path),{recursive:true});
- const resolutions=readResolutions(path);const prior=resolutions.find(x=>x.proposal_id===id&&x.revision===revision);
+ const reason=clean("reason",args.reason);const resolutions=readResolutions(path);const prior=resolutions.find(x=>x.proposal_id===id&&x.revision===revision);
  if(prior&&prior.session!==session)throw new ToolError("此 proposal revision 已由另一 resolver 处理");
  if(prior)return {...prior,duplicate:true};
  const home=ensureInbox(deps),engine=deps.enginePath??defaultEnginePath();
@@ -219,6 +248,7 @@ function resolveProposal(args:Record<string,unknown>,client:string,deps:CoreDeps
  if(written.rc!==0||!claim?.id)throw new Error("仲裁决定写入失败："+written.out.slice(0,200));
  const row:Resolution={proposal_id:id,revision,verdict,disposition:disposition as "accept"|"reject",session,reason,claim_id:claim.id,at:new Date().toISOString()};appendFileSync(path,JSON.stringify(row)+"\n",{encoding:"utf8",flag:"a"});
  return {...row,active:proposalView(pp,readEndorsements(deps.endorsementsPath),true,readResolutions(path)).active.some(x=>x.proposal_id===id&&x.revision===revision)};
+ });
 }
 function endorseProposal(args:Record<string,unknown>,client:string,deps:CoreDeps):unknown {
   need(args,["proposal_id","case","verdict","anchor","reason","model"]);

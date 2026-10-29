@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
-import { callTool, clean, slug, INSTRUCTIONS, proposalStatus, defaultEnginePath } from "../lib/mcp-core.js";
+import { callTool, clean, slug, INSTRUCTIONS, proposalStatus, defaultEnginePath, proposeRule } from "../lib/mcp-core.js";
 import { registerTasteTools } from "../lib/tools.js";
 const deps = { rulesPath: new URL("./fixtures/rules.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), queuePath: "/nonexistent/queue.json", inboxHome: "/nonexistent/inbox" };
 test("clean 拒绝语法分隔符", () => { assert.throws(() => clean("anchor", "a; judge=x")); assert.throws(() => clean("anchor", "a]b")); assert.equal(clean("x", " ok "), "ok"); });
@@ -16,6 +16,24 @@ test("INSTRUCTIONS 六条协议在位", () => { assert.equal(INSTRUCTIONS.split(
 
 test("defaultEnginePath handles exports that block package.json subpath", () => {
  const p=defaultEnginePath();assert.ok(p.endsWith("dist\\bundle\\bin.cjs"));assert.ok(existsSync(p));
+});
+
+test("lock recovers only after confirming stale PID is dead", async () => {
+ const {mkdtempSync,writeFileSync,rmSync,readFileSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+ const h=mkdtempSync(join(tmpdir(),"taste-stale-lock-")),proposalsPath=join(h,"p.jsonl"),lock=proposalsPath+".lock";
+ writeFileSync(lock,JSON.stringify({pid:2147483000,nonce:"dead-owner",startedAt:"now"}));
+ const deps={rulesPath:join(h,"rules.json"),queuePath:join(h,"q.json"),inboxHome:join(h,"inbox"),proposalsPath};
+ const p=proposeRule({domain:"lock-test",rule_id:"LOCK-TEST-1",case:"lock-case",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"test-session"},"dsh-session:test-session",{rulesPath:join(h,"rules.json"),queuePath:join(h,"q.json"),inboxHome:join(h,"inbox"),proposalsPath});
+ assert.equal(p.revision,1);assert.equal(readFileSync(proposalsPath,"utf8").trim().length>0,true);assert.equal(await import("node:fs").then(m=>m.existsSync(lock)),false);rmSync(h,{recursive:true,force:true});
+});
+
+test("lock reclaims aged empty and corrupt files but not fresh locks", async () => {
+ const {mkdtempSync,writeFileSync,rmSync,utimesSync,readFileSync,existsSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+ for(const [label,content] of [["empty",""],["corrupt","not-json"]]){
+  const h=mkdtempSync(join(tmpdir(),"taste-bad-lock-")),path=join(h,"p.jsonl"),lock=path+".lock";writeFileSync(lock,content);const old=new Date(Date.now()-5000);utimesSync(lock,old,old);
+  const out=proposeRule({domain:"lock",rule_id:"LOCK-RECOVER-1",case:"case",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"s"},"dsh-session:s",{rulesPath:join(h,"rules.json"),queuePath:join(h,"q"),inboxHome:join(h,"inbox"),proposalsPath:path});assert.equal(out.revision,1);assert.equal(existsSync(lock),false);rmSync(h,{recursive:true,force:true});
+ }
+ const h=mkdtempSync(join(tmpdir(),"taste-live-lock-")),path=join(h,"p.jsonl"),lock=path+".lock";writeFileSync(lock,JSON.stringify({pid:process.pid,nonce:"active-test-owner",startedAt:new Date().toISOString()}));const deps={rulesPath:join(h,"rules.json"),queuePath:join(h,"q"),inboxHome:join(h,"inbox"),proposalsPath:path};assert.throws(()=>proposeRule({domain:"lock",rule_id:"LOCK-LIVE-1",case:"case",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"s"},"dsh-session:s",deps),/修改或锁所有者仍存活/);assert.equal(existsSync(lock),true);const held=JSON.parse(readFileSync(lock,"utf8"));assert.equal(held.nonce,"active-test-owner");rmSync(h,{recursive:true,force:true});
 });
 test("taste_update 自助建提案、修订追加且不生效", async () => {
   const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
