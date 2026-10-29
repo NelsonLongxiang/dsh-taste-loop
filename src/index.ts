@@ -15,6 +15,8 @@ import { startTasteHttp } from "./http-face.js";
 
 export const name = "taste-loop";
 export const inject = ["tools", "systemPrompt"];
+/** Deployed plugin version (kept in a loaded module so HMR module-diff reflects releases). */
+export const VERSION = "0.1.2";
 
 export interface Config {
   verifierRepo: string;
