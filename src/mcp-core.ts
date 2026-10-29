@@ -122,6 +122,7 @@ interface Resolution { proposal_id:string; revision:number; verdict:string; disp
 function readEndorsements(path?:string):Endorsement[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Endorsement)}
 function readResolutions(path?:string):Resolution[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Resolution)}
 const sha = (s:string):string => createHash("sha256").update(s).digest("hex");
+const verifiedSession = (client:string):string|undefined => client.startsWith("dsh-session:") ? client.slice("dsh-session:".length) : /^mcp\/[a-z0-9][a-z0-9-]{0,63}$/.test(client) ? client : undefined;
 export function proposalStatus(p:RuleProposal,votes:Endorsement[]):{status:RuleProposal["status"];effective:boolean;independent:Record<string,string[]>} {
  const relevant=votes.filter(v=>v.proposal_id===p.proposal_id&&v.revision===p.revision&&!v.ctx?.startsWith("decision:")&&(!p.author_session||v.session!==p.author_session));
  const independent:Record<string,string[]>={}; for(const v of relevant)(independent[v.verdict]??=[]).push(v.session);
@@ -141,7 +142,7 @@ export function proposeRule(args:Record<string,unknown>,client:string,deps:CoreD
   if(!MODEL_RE.test(model)) throw new ToolError("model 只能含字母、数字和 . _ : / -");
   if(!/^[A-Z0-9][A-Z0-9-]{2,63}$/.test(ruleId)) throw new ToolError("rule_id 必须是稳定的大写字母/数字/连字符标识");
   if(!CLIENT_RE.test(client)) throw new ToolError("调用方身份缺失或非法");
-  const sessionId=client.startsWith("dsh-session:")?client.slice("dsh-session:".length):undefined;
+  const sessionId=verifiedSession(client);
   if(!sessionId&&!client.startsWith("mcp/")) throw new ToolError("提案必须经 DSH session 或认证市场 MCP 网关提交");
   const raw=args.candidates; if(!Array.isArray(raw)||raw.length<2||raw.some(x=>typeof x!=="string"||!x.trim())) throw new ToolError("candidates 至少包含两个非空候选");
   const candidates=raw.map((x,i)=>clean("candidates["+i+"]",x)); if(!candidates.includes(selected)) throw new ToolError("selected 必须是 candidates 之一");
@@ -218,7 +219,7 @@ function endorseProposal(args:Record<string,unknown>,client:string,deps:CoreDeps
   const proposalId=clean("proposal_id",args.proposal_id);const revisions=readProposals(pp).filter(x=>x.proposal_id===proposalId).sort((a,b)=>b.revision-a.revision);const p=revisions[0];if(!p)throw new ToolError("proposal 不存在");if(Number(args.revision)!==p.revision)throw new ToolError("提案版本已变化；请重新读取最新版本再背书");
   const model=clean("model",args.model),ctx=typeof args.ctx==="string"&&args.ctx.trim()?clean("ctx",args.ctx):undefined,verdict=clean("verdict",args.verdict);
   if(!MODEL_RE.test(model)||!CLIENT_RE.test(client))throw new ToolError("model 或调用方身份非法");if(!p.candidates.includes(verdict))throw new ToolError("verdict 必须属于提案候选");
-  const sessionId=client.startsWith("dsh-session:")?client.slice("dsh-session:".length):undefined;
+  const sessionId=verifiedSession(client);
   if(!sessionId)throw new ToolError("独立背书需要可验证的 DSH agent session ID；共享网关身份不足以计独立来源");
   const caseId=clean("case",args.case);if(caseId!==p.case)throw new ToolError("背书必须沿用提案确定性 case");
   if(p.author_session&&sessionId===p.author_session)throw new ToolError("提案作者的判断须用 taste_record 记录；独立背书须来自其他会话");

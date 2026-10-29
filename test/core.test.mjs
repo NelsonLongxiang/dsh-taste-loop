@@ -119,7 +119,8 @@ test("gateway may submit proposals but cannot supply endorsement identity", asyn
   const {mkdtempSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
   const home=mkdtempSync(join(tmpdir(),"taste-gateway-")),d={...deps,proposalsPath:join(home,"p.jsonl")};
   const p=callTool("update",{action:"propose",domain:"d",rule_id:"TEST-RULE-1",case:"c",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/market-gateway",d);assert.equal(p.status,"pending_review");
-  assert.throws(()=>callTool("update",{action:"endorse",proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/market-gateway",d),/session ID/);
+  const authorized=callTool("update",{action:"propose",domain:"d",rule_id:"TEST-RULE-2",case:"c2",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/dsh-agent-2",d);assert.equal(authorized.author_session,"mcp/dsh-agent-2");
+  assert.throws(()=>callTool("update",{action:"endorse",proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/market-gateway",d),/其他会话/);
   assert.equal(proposalStatus({...p,author_session:undefined},[{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"one",session:"one",claim_id:"1",at:"now"},{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"two",session:"two",claim_id:"2",at:"now"},{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"three",session:"three",claim_id:"3",at:"now"}]).effective,false);
   rmSync(home,{recursive:true,force:true});
 });
