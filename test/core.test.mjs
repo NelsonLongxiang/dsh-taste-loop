@@ -115,13 +115,15 @@ test("独立反向来源使自助规则进入仲裁而不生效", async () => {
  const out=callTool("rules",{domain:"d"},"agent",{...deps,rulesPath,proposalsPath,endorsementsPath});assert.equal(out.rules.length,0);assert.equal(out.proposals[0].status,"needs_arbitration");assert.equal(out.proposals[0].effective,false);rmSync(home,{recursive:true,force:true});
 });
 
-test("gateway may submit proposals but cannot supply endorsement identity", async () => {
+test("untrusted mcp client strings cannot create sessions, endorse, or resolve", async () => {
   const {mkdtempSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
   const home=mkdtempSync(join(tmpdir(),"taste-gateway-")),d={...deps,proposalsPath:join(home,"p.jsonl")};
-  const p=callTool("update",{action:"propose",domain:"d",rule_id:"TEST-RULE-1",case:"c",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/market-gateway",d);assert.equal(p.status,"pending_review");
-  const authorized=callTool("update",{action:"propose",domain:"d",rule_id:"TEST-RULE-2",case:"c2",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/dsh-agent-2",d);assert.equal(authorized.author_session,"mcp/dsh-agent-2");
-  assert.throws(()=>callTool("update",{action:"endorse",proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/market-gateway",d),/其他会话/);
-  assert.equal(proposalStatus({...p,author_session:undefined},[{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"one",session:"one",claim_id:"1",at:"now"},{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"two",session:"two",claim_id:"2",at:"now"},{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"three",session:"three",claim_id:"3",at:"now"}]).effective,false);
+  assert.throws(()=>callTool("update",{action:"propose",domain:"d",rule_id:"TEST-RULE-1",case:"c",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/market-gateway",d),/可信 DSH session ID/);
+  const p={proposal_id:"untrusted",author_session:undefined,selected:"A"};
+  assert.equal(proposalStatus(p,[{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"mcp/a",session:"mcp/a",claim_id:"1",at:"now"},{proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",judge:"mcp/b",session:"mcp/b",claim_id:"2",at:"now"}]).effective,false);
+  assert.throws(()=>callTool("update",{action:"endorse",proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",reason:"r",anchor:"a",model:"test-model"},"mcp/attacker",d),/proposal 不存在/);
+  assert.throws(()=>callTool("update",{action:"resolve",proposal_id:p.proposal_id,revision:1,verdict:"A",disposition:"accept",reason:"r"},"mcp/attacker",d),/arbiter session/);
+  const native=callTool("update",{action:"propose",domain:"d",rule_id:"TEST-RULE-2",case:"c2",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"test-model",session_id:"native-session"},"dsh-session:native-session",d);assert.equal(native.author_session,"native-session");
   rmSync(home,{recursive:true,force:true});
 });
 

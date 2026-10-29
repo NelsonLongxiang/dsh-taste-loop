@@ -122,7 +122,7 @@ interface Resolution { proposal_id:string; revision:number; verdict:string; disp
 function readEndorsements(path?:string):Endorsement[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Endorsement)}
 function readResolutions(path?:string):Resolution[]{if(!path||!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line) as Resolution)}
 const sha = (s:string):string => createHash("sha256").update(s).digest("hex");
-const verifiedSession = (client:string):string|undefined => client.startsWith("dsh-session:") ? client.slice("dsh-session:".length) : /^mcp\/[a-z0-9][a-z0-9-]{0,63}$/.test(client) ? client : undefined;
+const verifiedSession = (client:string):string|undefined => client.startsWith("dsh-session:") ? client.slice("dsh-session:".length) : undefined;
 export function proposalStatus(p:RuleProposal,votes:Endorsement[]):{status:RuleProposal["status"];effective:boolean;independent:Record<string,string[]>} {
  const relevant=votes.filter(v=>v.proposal_id===p.proposal_id&&v.revision===p.revision&&!v.ctx?.startsWith("decision:")&&(!p.author_session||v.session!==p.author_session));
  const independent:Record<string,string[]>={}; for(const v of relevant)(independent[v.verdict]??=[]).push(v.session);
@@ -143,7 +143,7 @@ export function proposeRule(args:Record<string,unknown>,client:string,deps:CoreD
   if(!/^[A-Z0-9][A-Z0-9-]{2,63}$/.test(ruleId)) throw new ToolError("rule_id 必须是稳定的大写字母/数字/连字符标识");
   if(!CLIENT_RE.test(client)) throw new ToolError("调用方身份缺失或非法");
   const sessionId=verifiedSession(client);
-  if(!sessionId&&!client.startsWith("mcp/")) throw new ToolError("提案必须经 DSH session 或认证市场 MCP 网关提交");
+  if(!sessionId) throw new ToolError("规则提案需要可信 DSH session ID；HTTP 网关客户端身份未经验证，仅可写普通判断，不可提出共享规则");
   const raw=args.candidates; if(!Array.isArray(raw)||raw.length<2||raw.some(x=>typeof x!=="string"||!x.trim())) throw new ToolError("candidates 至少包含两个非空候选");
   const candidates=raw.map((x,i)=>clean("candidates["+i+"]",x)); if(!candidates.includes(selected)) throw new ToolError("selected 必须是 candidates 之一");
   const existing=loadRules(deps.rulesPath).find(r=>r.rule_id===ruleId); if(existing&&existing.domain!==domain) throw new ToolError("该 rule_id 已属于其他域，不能跨域接管");
@@ -196,7 +196,7 @@ function proposalView(path?:string,votes:Endorsement[]=[],includeAuthorDetails=t
 }
 function resolveProposal(args:Record<string,unknown>,client:string,deps:CoreDeps):unknown {
  const session=client.startsWith("dsh-session:")?client.slice("dsh-session:".length):undefined;
- if(!session||!deps.arbiterSessionIds?.includes(session))throw new ToolError("当前会话不在配置的 arbiter session allowlist 中；resolution denied");
+ if(!session||client.startsWith("mcp/")||!deps.arbiterSessionIds?.includes(session))throw new ToolError("当前会话不在配置的 arbiter session allowlist 中；resolution denied");
  need(args,["proposal_id","verdict","disposition","reason"]);
  const pp=deps.proposalsPath??join(dirname(deps.rulesPath),"..","work","taste-rule-proposals.jsonl");
  const id=clean("proposal_id",args.proposal_id),revision=Number(args.revision);if(!Number.isInteger(revision)||revision<1)throw new ToolError("revision 必须是正整数");const p=readProposals(pp).find(x=>x.proposal_id===id&&x.revision===revision);
