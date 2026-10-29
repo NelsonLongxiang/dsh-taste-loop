@@ -73,7 +73,8 @@ test("新修订不得隐藏旧版本仲裁状态", async () => {
  const vote2={...vote1,judge:"reviewer2",session:"reviewer2",claim_id:"vote2"};writeFileSync(ep,[vote1,vote2].map(JSON.stringify).join("\n")+"\n");
  const view=callTool("update",{action:"list"},"reader",{...deps,proposalsPath:pp,endorsementsPath:ep});assert.equal(view.latest[0].status,"needs_arbitration");
  assert.equal(view.active.length,0);
- assert.throws(()=>callTool("update",{action:"propose",proposal_id:"p",domain:"d",rule_id:"TEST-RULE-1",case:"c",clause:"third revision",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"author-session"},"dsh-session:author-session",{...deps,proposalsPath:pp,endorsementsPath:ep}),/未解决的独立分歧/);
+ assert.throws(()=>callTool("update",{action:"propose",proposal_id:"p",domain:"d",rule_id:"TEST-RULE-1",case:"c",clause:"third revision",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"author-session"},"dsh-session:author-session",{...deps,proposalsPath:pp,endorsementsPath:ep}),/仲裁/);
+ assert.throws(()=>callTool("update",{action:"propose",proposal_id:"escape",domain:"d",rule_id:"TEST-RULE-1",case:"c",clause:"escaped",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"author-session"},"dsh-session:author-session",{...deps,proposalsPath:pp,endorsementsPath:ep}),/新 proposal_id/);
  rmSync(h,{recursive:true,force:true});
 });
 

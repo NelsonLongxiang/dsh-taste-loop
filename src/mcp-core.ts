@@ -150,6 +150,10 @@ export function proposeRule(args:Record<string,unknown>,client:string,deps:CoreD
   if(readProposals(path).some(p=>p.rule_id===ruleId&&p.domain!==domain)) throw new ToolError("该 rule_id 已有其他域提案，不能跨域接管");
   const proposalId=clean("proposal_id",String(args.proposal_id||slug(domain)+"--"+ruleId));
   const allHistory=readProposals(path);
+  const priorDomainHistory=allHistory.filter(p=>p.rule_id===ruleId&&p.domain===domain);
+  const statusView=proposalView(path,readEndorsements(deps.endorsementsPath),true,readResolutions(deps.resolutionsPath));
+  const unresolvedDomain=priorDomainHistory.some(p=>statusView.latest.find(x=>x.proposal_id===p.proposal_id)?.status==="needs_arbitration");
+  if(unresolvedDomain)throw new ToolError("该 rule_id 在本域存在未解决的仲裁；不能用新 proposal_id 绕过");
   const rejectedIds=new Set(readResolutions(deps.resolutionsPath).filter(r=>r.disposition==="reject").map(r=>r.proposal_id));
   if(rejectedIds.has(proposalId))throw new ToolError("该 proposal ID 已被 human resolver 拒绝；请新建 proposal ID");
   if(!args.proposal_id&&allHistory.some(p=>p.rule_id===ruleId&&p.domain===domain&&p.proposal_id!==proposalId))throw new ToolError("该规则已有其他 proposal_id；修订需复用已有 proposal_id");
