@@ -1,15 +1,54 @@
-# @nelsonlongxiang/dsh-taste-loop
+# dsh-taste-loop
 
-品味闭环 DSH 插件（host-only）：`taste_rules / taste_case / taste_record / taste_queue` 四工具 + taste-mcp StreamableHTTP 服务托管（供工作台市场网关聚合为 `taste__*`）+ 协议经工具描述与 systemPrompt 段自呈现。
+Taste-loop plugin for DeepSeek Harness (DSH, host-only): a self-service **taste protocol** for domain agents — record judgments, propose versioned rule revisions, and reach independent-session quorum consensus, with human arbitration for disputes.
 
-- 设计稿：ygl-taste-pilot-verifier `docs/PLUGIN-DESIGN.md`（评审裁定见其 issue #7）
-- 核心与验证器仓 `services/taste-mcp/server.mjs` 双实现同源（`pnpm drift` 防漂移）
-- 引擎自包含（ygl-trees 0.114.9 钉版，带空锁残尸重试缓解）
-- 配置：`verifierRepo`（必填）、`inboxHome/host/port/toolsEnabled/httpEnabled`
-- 边界：不提供仲裁、改规则、跑判定——裁决是人的，判定只出自 verify run
+## Tools
 
-## 开发
+| Tool | Purpose |
+|---|---|
+| `taste_rules` | Registered rules + proposal states (effective / pending_review / needs_arbitration) |
+| `taste_case` | Deterministic case ID — the same judgment point always maps to the same ID |
+| `taste_record` | Record a taste judgment into the verifier inbox |
+| `taste_queue` | Snapshot of the human arbitration / settlement queue |
+| `taste_update` | Self-service rule lifecycle: `propose / list / blind / endorse / resolve` |
+
+## Self-service rule lifecycle
+
+1. Any domain agent creates or revises a **versioned rule proposal** (`taste_update propose`). History is append-only JSONL; nothing auto-activates.
+2. Two **independent DSH sessions** (distinct from the proposal author; `ctx=decision:` contexts never count) endorse the same revision → it becomes the domain's `effective` version. Consensus `effective` and human `ratified` are always reported separately.
+3. Two independent dissenting sessions → `needs_arbitration`. The previous effective version stays in force while the dispute is frozen.
+4. A human arbiter (see `arbiterSessionIds`) resolves the dispute; every resolution appends a claim and a resolution row.
+
+**Security boundary:** HTTP gateway callers (self-reported `X-Market-Client`) may write ordinary judgments, but can **never** propose shared rules, endorse, or resolve — only native DSH session identities are trusted for shared-rule operations. Proposal/endorsement/resolution ledgers are serialized with crash-recoverable file locks.
+
+## Install
+
+From a local checkout (recommended for now):
+
+```bash
+dsh plugin --profile web add /path/to/dsh-taste-loop
+```
+
+From GitHub source: the `prepare` script builds `lib/`, but `@deepseek-ai/*` peers resolve only inside a DSH profile — a standalone `pnpm add github:NelsonLongxiang/dsh-taste-loop` outside a DSH profile may fail typecheck.
+
+## Configuration (`cordis.patch.yml`)
+
+```yaml
+- id: taste-loop
+  config:
+    verifierRepo: 'D:path	oerifier-repo'   # required
+    inboxHome: 'D:path	oinbox'              # optional
+    host: 127.0.0.1                            # taste-mcp HTTP face
+    port: 9810
+    arbiterSessionIds: []                      # DSH session IDs allowed to resolve disputes
+```
+
+## Development
 
 ```bash
 pnpm install && pnpm build && pnpm verify && pnpm drift
 ```
+
+## License
+
+[MIT](./LICENSE)
