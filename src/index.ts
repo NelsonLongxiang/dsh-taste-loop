@@ -23,6 +23,7 @@ export interface Config {
   port?: number;
   toolsEnabled?: boolean;
   httpEnabled?: boolean;
+  arbiterSessionIds?: string[];
 }
 export const Config: z<Config> = z.object({
   verifierRepo: z.string().description("ygl-taste-pilot-verifier 仓路径（rules.json / human-queue.json 读取源）"),
@@ -31,14 +32,22 @@ export const Config: z<Config> = z.object({
   port: z.number().default(9810).description("taste-mcp 监听端口"),
   toolsEnabled: z.boolean().default(true).description("注册 taste_* 四工具"),
   httpEnabled: z.boolean().default(true).description("托管 taste-mcp HTTP 面（市场网关 taste__* 依赖它）"),
+  arbiterSessionIds: z.array(z.string()).default([]).description("允许解决自助品味提案分歧的 DSH session IDs；空数组则仲裁操作关闭"),
 });
 
 export function apply(ctx: Context, config: Config): void {
   const repo = resolve(config.verifierRepo);
+  const inboxHome = config.inboxHome ? resolve(config.inboxHome) : join(repo, "state", "inbox");
   const deps: CoreDeps = {
     rulesPath: join(repo, "data", "taste", "rules.json"),
     queuePath: join(repo, "work", "human-queue.json"),
-    inboxHome: config.inboxHome ? resolve(config.inboxHome) : join(repo, "state", "inbox"),
+    inboxHome,
+    enginePath: join(repo, "node_modules", "ygl-trees", "dist", "bundle", "bin.cjs"),
+    // Shared across all agents in this verifier domain; the inbox DB may be profile-local.
+    proposalsPath: join(repo, "work", "taste-rule-proposals.jsonl"),
+    endorsementsPath: join(repo, "work", "taste-rule-endorsements.jsonl"),
+    resolutionsPath: join(repo, "work", "taste-rule-resolutions.jsonl"),
+    arbiterSessionIds: config.arbiterSessionIds ?? [],
   };
   if (config.httpEnabled !== false) {
     ctx.effect(() => {

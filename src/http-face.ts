@@ -36,16 +36,17 @@ export function handler(deps: CoreDeps) {
         if (msg.method === "ping") return send(200, { jsonrpc: "2.0", id: msg.id, result: {} });
         if (msg.method === "tools/list") {
           return send(200, { jsonrpc: "2.0", id: msg.id, result: { tools: [
-            { name: "rules", description: "动手前先调：返回品味规则。ratified=true 为已认定，可当规则执行；其余是候选，只能参考，遇到判断点仍要 record。", inputSchema: { type: "object", properties: { domain: { type: "string" } }, additionalProperties: false } },
+            { name: "rules", description: "动手前先调：返回本域规则与提案。ratified=true 是人工认定；effective=true 是两名作者外独立 DSH session 同向形成的域内当前版本；pending 仅供记录判断。", inputSchema: { type: "object", properties: { domain: { type: "string" } }, additionalProperties: false } },
             { name: "case", description: "生成确定性案例 id：同一对象同一位置永远同 id，不同 agent 对同一判断点必须用同一 id 才能比对。", inputSchema: { type: "object", properties: { object: { type: "string" }, position: { type: "string" } }, required: ["object", "position"], additionalProperties: false } },
             { name: "record", description: "在『哪种做法对』的判断点记一条品味判断后继续工作；身份由通道确认，model 填你的模型 id；看过既有裁决 ctx 必须以 decision: 开头。", inputSchema: { type: "object", properties: { domain: { type: "string" }, case: { type: "string" }, rule: { type: "string" }, verdict: { type: "string" }, anchor: { type: "string" }, reason: { type: "string" }, model: { type: "string" }, ctx: { type: "string" }, layer: { type: "string", enum: ["L0", "L1", "L2", "L3", "L4"] } }, required: ["domain", "case", "rule", "verdict", "anchor", "reason", "model"], additionalProperties: false } },
-            { name: "queue", description: "只有人能处理的事项：待仲裁分歧、到期业务结算、各规则认定状态。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+            { name: "queue", description: "查看待仲裁分歧、到期结算和规则认定状态。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+            { name: "update", description: "自助创建/修订规则提案并对指定版本盲判；每条提案使用固定 case ID，只有同一版本同向共识才 active。", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["propose", "list", "blind", "endorse", "resolve"] }, domain: { type: "string" }, rule_id: { type: "string" }, proposal_id: { type: "string" }, revision: { type: "number" }, case: { type: "string" }, clause: { type: "string" }, candidates: { type: "array", items: { type: "string" } }, selected: { type: "string" }, verdict: { type: "string" }, disposition: { type: "string", enum: ["accept", "reject"] }, reason: { type: "string" }, anchor: { type: "string" }, model: { type: "string" }, ctx: { type: "string" } }, additionalProperties: false } },
           ] } });
         }
         if (msg.method === "tools/call") {
           if (typeof msg.params?.name !== "string") return fail(-32602, "params.name 必填");
           try {
-            const out = callTool(msg.params.name as ToolName, (msg.params.arguments as Record<string, unknown>) ?? {}, client, deps);
+            const out = callTool(msg.params.name as ToolName, (msg.params.arguments as Record<string, unknown>) ?? {}, "mcp/" + client, deps);
             return send(200, { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] } });
           } catch (e) {
             return send(200, { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: `执行失败：${(e as Error)?.message || e}` }], isError: true } });
