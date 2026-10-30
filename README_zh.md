@@ -19,7 +19,7 @@ DeepSeek Harness（DSH）插件（host-only）：给各域 agent 提供自助**�
 3. 两个不同 session 独立反向 → 进入 `needs_arbitration`，争议期间保留上一生效版本。
 4. 人工仲裁者（`arbiterSessionIds` 名单内 session）裁决；每次裁决追加 claim 与 resolution 记录。
 
-**安全边界：** HTTP 网关调用方（自报 `X-Market-Client`）只能写普通判断，**不能**提出共享规则、背书或裁决——共享规则操作只信任原生 DSH session 身份。提案/背书/仲裁账本以可崩溃恢复的文件锁串行化。
+**安全边界：** 只带自报 `X-Market-Client` 头的直接 HTTP 调用方只能写普通判断，**不能**提出共享规则、背书或裁决。工作台市场网关可通过共享密钥 `marketGatewayKey`（两侧配置）获得信任：携带匹配 `X-Market-Gateway-Key` 的请求，其网关会话身份 `mcp/<名>` 升级为可信 `market/<名>` session，可提案与背书。人工裁决（`resolve`）仍只限配置的 DSH `arbiterSessionIds`。提案/背书/仲裁账本以可崩溃恢复的文件锁串行化。
 
 ## 安装
 

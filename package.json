@@ -1,6 +1,6 @@
 {
   "name": "@nelsonlongxiang/dsh-taste-loop",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Taste-loop DSH plugin (host-only): taste_rules/case/record/queue/update tools + taste-mcp HTTP hosting. Self-service versioned taste rules with independent-session quorum and human arbitration. 品味闭环插件：自助版本化规则提案+独立共识+人工仲裁。",
   "type": "module",
   "main": "lib/index.js",

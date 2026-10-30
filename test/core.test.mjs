@@ -35,6 +35,20 @@ test("lock reclaims aged empty and corrupt files but not fresh locks", async () 
  }
  const h=mkdtempSync(join(tmpdir(),"taste-live-lock-")),path=join(h,"p.jsonl"),lock=path+".lock";writeFileSync(lock,JSON.stringify({pid:process.pid,nonce:"active-test-owner",startedAt:new Date().toISOString()}));const deps={rulesPath:join(h,"rules.json"),queuePath:join(h,"q"),inboxHome:join(h,"inbox"),proposalsPath:path};assert.throws(()=>proposeRule({domain:"lock",rule_id:"LOCK-LIVE-1",case:"case",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"s"},"dsh-session:s",deps),/修改或锁所有者仍存活/);assert.equal(existsSync(lock),true);const held=JSON.parse(readFileSync(lock,"utf8"));assert.equal(held.nonce,"active-test-owner");rmSync(h,{recursive:true,force:true});
 });
+
+test("verified market sessions propose, endorse to quorum, but cannot resolve", async () => {
+ const {mkdtempSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+ const h=mkdtempSync(join(tmpdir(),"taste-market-sessions-")),pp=join(h,"p.jsonl"),ep=join(h,"e.jsonl");
+ const d={...deps,proposalsPath:pp,endorsementsPath:ep,inboxHome:join(h,"inbox"),enginePath:"D:/workspace/ygl-taste-pilot-verifier/node_modules/ygl-trees/dist/bundle/bin.cjs"};
+ const p=callTool("update",{action:"propose",domain:"d",rule_id:"MARKET-RULE-1",case:"c",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"market/agent-001"},"verified-market:agent-001",d);
+ assert.equal(p.author_session,"market/agent-001");assert.equal(p.status,"pending_review");
+ callTool("update",{action:"endorse",proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",anchor:"a",reason:"r",model:"m"},"verified-market:agent-002",d);
+ const e2=callTool("update",{action:"endorse",proposal_id:p.proposal_id,revision:1,case:"c",verdict:"A",anchor:"a",reason:"r",model:"m"},"verified-market:agent-003",d);
+ assert.equal(e2.status,"active");assert.deepEqual(e2.independent.A,["market/agent-002","market/agent-003"]);
+ assert.throws(()=>callTool("update",{action:"resolve",proposal_id:p.proposal_id,revision:1,verdict:"A",disposition:"accept",reason:"r"},"verified-market:agent-001",{...d,arbiterSessionIds:["market/agent-001"]}),/arbiter session/);
+ assert.throws(()=>callTool("update",{action:"propose",domain:"d",rule_id:"MARKET-RULE-2",case:"c2",clause:"c",candidates:["A","B"],selected:"A",reason:"r",anchor:"a",model:"m",session_id:"market/x"},"mcp/agent-001",d),/可信 DSH session ID/);
+ rmSync(h,{recursive:true,force:true});
+});
 test("taste_update 自助建提案、修订追加且不生效", async () => {
   const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

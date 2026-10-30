@@ -3,7 +3,7 @@
  * 纯逻辑 + 可注入依赖（规则/队列读取、引擎调用），双实现同源由 scripts/check-drift.mjs 防漂移。
  * 引擎调用带孤儿空锁重试（1919cfb 同款缓解：Windows 快速连发下空 .ygllock 残尸误判活锁）。
  */
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -39,6 +39,8 @@ export interface CoreDeps {
   resolutionsPath?: string;
   arbiterSessionIds?: string[];
   enginePath?: string;
+  /** Shared secret with the workbench-market gateway: when set, a matching X-Market-Gateway-Key header upgrades mcp/<name> to a verified market session. */
+  marketGatewayKey?: string;
 }
 export function defaultEnginePath(): string {
   const req = createRequire(import.meta.url);
@@ -155,7 +157,10 @@ function withLedgerLock<T>(ledgerPath:string,fn:()=>T):T {
  }
  try{return fn();}finally{try{closeSync(fd);const owner=readLockOwner(lock);if(owner?.pid===process.pid&&owner.nonce===nonce)unlinkSync(lock);}catch{/* retain unverifiable lock rather than deleting another owner's */}}
 }
-const verifiedSession = (client:string):string|undefined => client.startsWith("dsh-session:") ? client.slice("dsh-session:".length) : undefined;
+const verifiedSession = (client:string):string|undefined =>
+  client.startsWith("dsh-session:") ? client.slice("dsh-session:".length)
+  : client.startsWith("verified-market:") ? "market/" + client.slice("verified-market:".length)
+  : undefined;
 export function proposalStatus(p:RuleProposal,votes:Endorsement[]):{status:RuleProposal["status"];effective:boolean;independent:Record<string,string[]>} {
  const relevant=votes.filter(v=>v.proposal_id===p.proposal_id&&v.revision===p.revision&&!v.ctx?.startsWith("decision:")&&(!p.author_session||v.session!==p.author_session));
  const independent:Record<string,string[]>={}; for(const v of relevant)(independent[v.verdict]??=[]).push(v.session);

@@ -26,6 +26,7 @@ export interface Config {
   toolsEnabled?: boolean;
   httpEnabled?: boolean;
   arbiterSessionIds?: string[];
+  marketGatewayKey?: string;
 }
 export const Config: z<Config> = z.object({
   verifierRepo: z.string().description("ygl-taste-pilot-verifier 仓路径（rules.json / human-queue.json 读取源）"),
@@ -35,6 +36,7 @@ export const Config: z<Config> = z.object({
   toolsEnabled: z.boolean().default(true).description("注册 taste_* 四工具"),
   httpEnabled: z.boolean().default(true).description("托管 taste-mcp HTTP 面（市场网关 taste__* 依赖它）"),
   arbiterSessionIds: z.array(z.string()).default([]).description("允许解决自助品味提案分歧的 DSH session IDs；空数组则仲裁操作关闭"),
+  marketGatewayKey: z.string().description("与工作台市场网关共享的密钥；设置后，携带匹配 X-Market-Gateway-Key 的 mcp/<会话名> 身份可计为可信 market session（可提案/背书，不可仲裁）"),
 });
 
 export function apply(ctx: Context, config: Config): void {
@@ -50,6 +52,7 @@ export function apply(ctx: Context, config: Config): void {
     endorsementsPath: join(repo, "work", "taste-rule-endorsements.jsonl"),
     resolutionsPath: join(repo, "work", "taste-rule-resolutions.jsonl"),
     arbiterSessionIds: config.arbiterSessionIds ?? [],
+    ...(config.marketGatewayKey ? { marketGatewayKey: config.marketGatewayKey } : {}),
   };
   if (config.httpEnabled !== false) {
     ctx.effect(() => {

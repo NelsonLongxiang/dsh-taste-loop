@@ -1,9 +1,10 @@
 /**
  * taste-mcp StreamableHTTP 面（move-not-rewrite 自验证器仓 server.mjs 的 handler）。
- * 只认 X-Market-Client 网关身份头；POST-only；无状态 JSON-RPC 2.0。
+ * 只认 X-Market-Client 网关身份头（可选 X-Market-Gateway-Key 共享密钥升级为可信 market session）；POST-only；无状态 JSON-RPC 2.0。
  * 供市场网关 upstream（taste__*）与门户代理消费；与插件原生工具共用同一核心。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { callTool, CLIENT_RE, INSTRUCTIONS, type CoreDeps, type ToolName } from "./mcp-core.js";
 
 const PROTOCOL = "2025-03-26";
@@ -19,6 +20,9 @@ export function handler(deps: CoreDeps) {
     if (req.method !== "POST") return send(405, { error: "stateless StreamableHTTP：仅支持 POST" });
     const client = String(req.headers["x-market-client"] ?? "");
     if (!CLIENT_RE.test(client)) return send(401, { error: "缺少或无效的 X-Market-Client：本服务只接受工作台市场 MCP 网关转发的请求" });
+    const gatewayKey = String(req.headers["x-market-gateway-key"] ?? "");
+    const keyOk = deps.marketGatewayKey !== undefined && gatewayKey.length === deps.marketGatewayKey.length && timingSafeEqual(Buffer.from(gatewayKey), Buffer.from(deps.marketGatewayKey));
+    const effectiveClient = keyOk && client.startsWith("mcp/") ? "verified-market:" + client.slice(4) : "mcp/" + client;
     let raw = "";
     req.setEncoding("utf8");
     req.on("data", (c: string) => { raw += c; if (raw.length > 1024 * 1024) req.destroy(); });
@@ -46,7 +50,7 @@ export function handler(deps: CoreDeps) {
         if (msg.method === "tools/call") {
           if (typeof msg.params?.name !== "string") return fail(-32602, "params.name 必填");
           try {
-            const out = callTool(msg.params.name as ToolName, (msg.params.arguments as Record<string, unknown>) ?? {}, "mcp/" + client, deps);
+            const out = callTool(msg.params.name as ToolName, (msg.params.arguments as Record<string, unknown>) ?? {}, effectiveClient, deps);
             return send(200, { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] } });
           } catch (e) {
             return send(200, { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: `执行失败：${(e as Error)?.message || e}` }], isError: true } });
